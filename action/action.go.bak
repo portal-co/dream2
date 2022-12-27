@@ -1,0 +1,163 @@
+package action
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"os"
+	"os/exec"
+
+	shell "github.com/ipfs/go-ipfs-api"
+	"golang.org/x/sync/errgroup"
+	"portal.io/dream/util"
+)
+
+type Action struct {
+	Deps util.DirMap[In]
+	Outs []string
+	Join *string
+	Cmd  []string
+}
+
+type ActionKey struct {
+	Inp  map[string]string
+	Outs []string
+	Join *string
+	Cmd  []string
+}
+
+type In struct {
+	It Action
+}
+
+type State struct {
+	Sh        *shell.Shell
+	CachePath string
+	Exec      util.Sender[ExecS]
+	Chans     struct {
+		StrMap func() util.Pipe[map[string]string]
+		Error  func() util.Pipe[error]
+	}
+}
+
+type ExecS struct {
+	Key  ActionKey
+	Then util.Sender[map[string]string]
+	Err  util.Sender[error]
+}
+
+func Build(x Action, st State) (map[string]string, error) {
+	var i map[string]string
+	nn, err := util.KeysD(st.Sh, x.Deps)
+	if err != nil {
+		return nil, err
+	}
+	var g errgroup.Group
+	for _, n := range nn {
+		o := util.GetLazy(util.GetD(x.Deps, n), st.Sh)
+		g.Go(func() error {
+			y, err := Need(*o, st)
+			if err != nil {
+				return err
+			}
+			for yk, yv := range y {
+				i[yk] = yv
+			}
+			return nil
+		})
+	}
+	err = g.Wait()
+	if err != nil {
+		return nil, err
+	}
+	k := ActionKey{Inp: i, Outs: x.Outs, Join: x.Join, Cmd: x.Cmd}
+	s := make(chan map[string]string)
+	ss := st.Chans.StrMap()
+	e := make(chan error)
+	go func() {
+		v, err := util.RecvX(util.Receiver[map[string]string](ss.Receiver))
+		e <- err
+		if err == nil {
+			s <- v
+		}
+	}()
+	ee := st.Chans.Error()
+	go func() {
+		err, e2 := util.RecvX(util.Receiver[error](ee.Receiver))
+		e <- err
+		e <- e2
+	}()
+	util.SendX(ExecS{Key: k, Then: ss.Sender, Err: ee.Sender}, util.Sender[ExecS](st.Exec))
+	for {
+		select {
+		case err = <-e:
+			if err != nil {
+				return nil, err
+			}
+		case success := <-s:
+			return success, nil
+		}
+	}
+}
+
+func ExecLocal(k ActionKey, st State) (map[string]string, error) {
+	var err error
+	var t map[string]string
+	h := base64.StdEncoding.EncodeToString(util.Hash(k))
+	hp := os.Getenv("DREAM_CACHE") + "/" + h
+	ct, er := os.OpenFile(hp, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0666)
+	if er != nil {
+		ct, _ = os.OpenFile(hp, os.O_RDWR, 0666)
+		defer ct.Close()
+		var r map[string]string
+		err = json.NewDecoder(ct).Decode(&r)
+		if err != nil {
+			return nil, err
+		}
+		return r, nil
+	}
+	defer ct.Close()
+	tt, err := os.MkdirTemp("/tmp", "P*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tt)
+	c := []string{"bwrap", "--pwd", "/pwd", "--bind", tt, "/pwd/out", "--tmp", "/tmp"}
+	for ik, iv := range k.Inp {
+		c = append(c, "--ro-bind", "/ipfs/"+iv, ik)
+	}
+	c = append(c, k.Cmd...)
+	m := exec.Command(c[0], c[1:]...)
+	err = m.Run()
+	if err != nil {
+		return nil, err
+	}
+	for _, o := range k.Outs {
+		x, err := util.AddPath(st.Sh, tt+"/"+o, map[string]string{})
+		if err != nil {
+			return nil, err
+		}
+		t["/"+o] = x
+	}
+	jj, err := MaybeJoin(k, t, st)
+	if err != nil {
+		return nil, err
+	}
+	err = json.NewEncoder(ct).Encode(jj)
+	if err != nil {
+		return nil, err
+	}
+	return jj, nil
+}
+
+func MaybeJoin(x ActionKey, t map[string]string, st State) (map[string]string, error) {
+	if x.Join == nil {
+		return t, nil
+	}
+	s := util.IpfsLazy[Action]{Src: t[*x.Join]}
+	g := util.GetLazy(s, st.Sh)
+	return Build(*g, st)
+}
+
+func Need(i In, st State) (map[string]string, error) {
+	return Build(i.It, st)
+}
