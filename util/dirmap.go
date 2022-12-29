@@ -1,11 +1,14 @@
 package util
 
 import (
+	"sync"
+
 	shell "github.com/ipfs/go-ipfs-api"
 )
 
 type DirMap[V any] struct {
-	Src string
+	Src   string
+	Mutex sync.Mutex
 }
 
 func GetD[V any](m DirMap[V], k string) IpfsLazy[V] {
@@ -13,6 +16,8 @@ func GetD[V any](m DirMap[V], k string) IpfsLazy[V] {
 }
 
 func PutD[V any](sh *shell.Shell, m *DirMap[V], k string, v IpfsLazy[V]) error {
+	m.Mutex.Lock()
+	defer m.Mutex.Unlock()
 	x, err := sh.PatchLink(m.Src, k, v.Src, true)
 	if err != nil {
 		return err

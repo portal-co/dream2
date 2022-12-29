@@ -94,6 +94,8 @@ func main() {
 				fmt.Fprintf(os.Stderr, "%s", err.Error())
 				return
 			}
+			os.Stderr.Write(j)
+			fmt.Fprint(os.Stdout, h)
 			h, err = util.AddDir(sh, map[string]string{"results": h, "output": a})
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "%s", err.Error())
@@ -101,8 +103,8 @@ func main() {
 			}
 		} else {
 			os.Stderr.Write(<-ch)
+			fmt.Fprint(os.Stdout, h)
 		}
-		fmt.Fprint(os.Stdout, h)
 		if !interactive {
 			b := hhh
 			c := os.Getenv("PRTL_CACHE")
