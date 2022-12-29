@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	shell "github.com/ipfs/go-ipfs-api"
+	"portal.io/dream/embeds"
 	"portal.io/dream/util"
 )
 
