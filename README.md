@@ -1,13 +1,14 @@
 # dream2
 
 ## Description
-Project dream2
+A successor or iteration of the `dream` project, likely refining the engine or networking components.
 
 ## Goals
-- [ ] Add project goals
+- [ ] Improve upon `dream` architecture
+- [ ] Implement core utilities (`plex`, `net`)
 
 ## Progress
-- [ ] Initial setup
+- [ ] Go module initialized
 
 ---
 *AI assisted*
